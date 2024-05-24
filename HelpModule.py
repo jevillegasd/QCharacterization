@@ -39,8 +39,8 @@ def meas_spectrum(instr: E5080B_driver, f_c :float= 7.33e9, f_span:float = 80, p
     mag, phi = instr.get_data(meas)
     return f, mag, phi
 
-def lorentzian( x, x0, a, gam , a0):
-    return a0+ a/(2*np.pi) * gam / ( (gam/2)**2 + ( x - x0 )**2)
+def lorentzian( x, x0, a, gam ):
+    return a/(2*np.pi) * gam / ( (gam/2)**2 + ( x - x0 )**2)
 
 def Q2(f,mag, plot_f = False):
     '''
@@ -66,7 +66,7 @@ def Q2(f,mag, plot_f = False):
     return f_c[0], Q, fwhm[0]
 
 
-def Q(f, mag, plot_f = False):
+def Q(f, mag, plot_f = False, format='MA'):
     '''
     Loaded quality factor, fit to a conventional Lorentzian
     '''
@@ -74,36 +74,47 @@ def Q(f, mag, plot_f = False):
     from scipy.signal import find_peaks
 
     num_samp = round(len(f)/10)
-    
+
+    if format == 'DB':
+        mag = 10**(mag/20)
+
+    mag_min = mag.min()
     mag_lin = mag -mag.min()
-    max_v = mag_lin.max()
-    min_w = int(len(f)/20)
+
+    min_w = int(len(f)/100)
 
     peaks, _ = find_peaks(mag_lin, width=min_w, prominence=mag_lin.max()/2)
     flip = False
-    if len(peaks) == 0: 
-        mag_lin = max_v-mag_lin
+    if len(peaks) == 0:
+        zero = mag_lin.max()
+        mag_lin =zero -mag_lin
         peaks, _ = find_peaks(mag_lin, width=min_w, prominence=mag_lin.max()/2)
         flip = True
+        idx_fmax = peaks[0]
+    else:
+        idx_fmax = peaks[0]
 
-
-    idx_fmax = peaks[0]
-    mag_scale = max(mag_lin)
-
-    yData = mag_lin / mag_scale
+    max_v = mag_lin.max() # Normalization constant
+    yData = mag_lin / max_v #Normalize
     xData = range(len(f))
 
     param, _ = curve_fit(lorentzian, 
                          xData[idx_fmax-int(num_samp/2):idx_fmax+int(num_samp/2)], 
                          yData[idx_fmax-int(num_samp/2):idx_fmax+int(num_samp/2)])
-    mag_fit = [ lorentzian(x, *param)*mag_scale for x in xData ]
+    
+    mag_fit = [ lorentzian(x, *param)*max_v for x in xData ]
 
     if flip:
-        mag_fit = max_v-mag_fit
+        mag_fit = zero-mag_fit
+    mag_fit = mag_fit+mag_min
+
+    if format == 'DB':
+        mag_fit = 20*np.log10(mag_fit)
+
 
     f_c = f[idx_fmax]
     df = f[1]-f[0]
-    FWHM = abs(df*param[-1]) # Gamma = param[-1]
+    FWHM = abs(df*param[-2]) # Gamma = param[-1]
     Q = f_c/FWHM
     if plot_f:
         plt.plot(f,mag)

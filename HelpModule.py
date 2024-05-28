@@ -7,6 +7,7 @@ from numpy import sqrt, row_stack
 import scipy.interpolate as spy
 from scipy import odr
 from scipy.optimize import curve_fit
+from scipy.signal import peak_widths
 from E5080B_driver import E5080B_driver
 
 #Spectrometry one-liner
@@ -39,10 +40,13 @@ def meas_spectrum(instr: E5080B_driver, f_c :float= 7.33e9, f_span:float = 80, p
     mag, phi = instr.get_data(meas)
     return f, mag, phi
 
-def lorentzian( x, x0, a, gam , a0):
-    return a0+ a/(2*np.pi) * gam / ( (gam/2)**2 + ( x - x0 )**2)
+def lorentzian( x, x0, a0, a1,a2, gam):
+    '''
+        lorentizian with quadratic background
+    '''
+    return (a2*x**2+a1*x+a0)/(2*np.pi) * gam / ( (gam/2)**2 + ( x - x0 )**2)
 
-def Q2(f,mag, plot_f = False):
+def Q2(f,mag, format = 'MA', plot_f = False):
     '''
     Loaded quality factor, fit to a conventional Lorentzian using the scipy signal fitting tools
     '''
@@ -54,11 +58,26 @@ def Q2(f,mag, plot_f = False):
     thresh_bottom = np.median(mag) - 2 * np.std(mag)
 
     peaks_idx, _   = find_peaks(mag,  height =  thresh_top)
-    valley_idx, _ = find_peaks(-mag, height = -thresh_bottom)
+    peak_valley = False
+
+    if len(peaks_idx)==0:
+        peaks_idx, _ = find_peaks(-mag, height = -thresh_bottom)
+        peak_valley = True
 
     f_c = f[peaks_idx]
     df = (f[1]-f[0])
-    peaks_w = peak_widths(mag, peaks_idx, rel_height=0.2)
+
+
+    if format == 'DB':
+        rel_height= 3/(mag.max()-mag.min())
+    else:
+        rel_height = 1/sqrt(2)
+
+    if peak_valley:
+        peaks_w = peak_widths(-mag, peaks_idx, rel_height=rel_height)
+    else:
+        peaks_w = peak_widths(mag, peaks_idx, rel_height=rel_height)
+
     fwhm = peaks_w[0]*df
     Q = f_c[0]/fwhm[0]
     if plot_f:
@@ -66,49 +85,64 @@ def Q2(f,mag, plot_f = False):
     return f_c[0], Q, fwhm[0]
 
 
-def Q(f, mag, plot_f = False):
+def Q(f, mag, plot_f = False, format='MA'):
     '''
-    Loaded quality factor, fit to a conventional Lorentzian
+    Loaded quality factor, fit to a conventional Lorentzian in amplitude scale
     '''
     from scipy.optimize import curve_fit
     from scipy.signal import find_peaks
+    import plotly.graph_objects as go 
+    import plotly.express as px 
 
-    num_samp = round(len(f)/10)
-    
-    mag_lin = mag -mag.min()
-    max_v = mag_lin.max()
-    min_w = int(len(f)/20)
+    # Make sure data is in linear scale
+    if format == 'DB': mag_lin = 10**(mag/20)
+    else: mag_lin = mag
 
+    mag_min = mag_lin.min()
+    mag_lin = mag_lin -mag_min
+
+    min_w = int(len(f)/100)
     peaks, _ = find_peaks(mag_lin, width=min_w, prominence=mag_lin.max()/2)
-    flip = False
-    if len(peaks) == 0: 
-        mag_lin = max_v-mag_lin
+    
+    if len(peaks) == 0:
+        zero = mag_lin.max()
+        mag_lin =zero -mag_lin
         peaks, _ = find_peaks(mag_lin, width=min_w, prominence=mag_lin.max()/2)
         flip = True
+        idx_fc= peaks[0]
+    else:
+        flip = False
+        idx_fc = peaks[0]
 
-
-    idx_fmax = peaks[0]
-    mag_scale = max(mag_lin)
-
-    yData = mag_lin / mag_scale
-    xData = range(len(f))
+    max_v = mag_lin.max() # Normalization constant
+    yData = mag_lin / max_v #Normalize
+    xData = np.linspace(-len(f)/2,len(f)/2,len(f))
 
     param, _ = curve_fit(lorentzian, 
-                         xData[idx_fmax-int(num_samp/2):idx_fmax+int(num_samp/2)], 
-                         yData[idx_fmax-int(num_samp/2):idx_fmax+int(num_samp/2)])
-    mag_fit = [ lorentzian(x, *param)*mag_scale for x in xData ]
+                         xData, 
+                         yData)
+    
+    mag_fit = [ lorentzian(x, *param)*max_v for x in xData ]
 
-    if flip:
-        mag_fit = max_v-mag_fit
+    if flip: 
+        mag_fit = zero-mag_fit
+    mag_fit = mag_fit + mag_min
 
-    f_c = f[idx_fmax]
+    if format == 'DB':
+        mag_fit = 20*np.log10(mag_fit)
+
+    f_c = f[idx_fc]
     df = f[1]-f[0]
     FWHM = abs(df*param[-1]) # Gamma = param[-1]
     Q = f_c/FWHM
+
+
     if plot_f:
-        plt.plot(f,mag)
-        plt.plot(f,mag_fit)
+        fig = px.line(x=f,y=mag)
+        fig.add_trace(go.Scatter(x=f,y=mag_fit))
+        fig.show()
         pass
+
     return f_c, Q, FWHM
 
 def find_max(freqs,mag):
@@ -131,53 +165,6 @@ def find_flux_resonators_frequencies_min(currents,freqs,mags):
         resonator_frequencies[i] = y
     return resonator_frequencies
 
-def find_rough_estimate_Q(freqs,mags,format = "DB",width = 20):
-    '''MA: linear DB: Log'''
-
-    #print(format)
-    if format != "MA" and format != "DB":
-        raise ValueError("Wrong format. It should be MA or DB")
-
-    if format == "MA":
-        mags = 20*np.log10(mags);
-
-    half = -3;
-
-    max = np.max(mags);
-
-    mags = mags - max -half;
-
-    f0 = find_max(freqs,mags)
-    idx_f0 = np.where(mags == 3)[0][0]
-
-
-    a_min = 3
-    a_idx  = 0
-    for i in range(int(idx_f0-width/2),idx_f0):
-        aux = np.abs(mags[i])
-        if aux < a_min:
-            a_min = aux
-            a_idx  = i
-
-    
-    b_min = 3
-    b_idx  = 0
-    for i in range(idx_f0,int(idx_f0+width/2)):
-        aux = np.abs(mags[i])
-        if aux < b_min:
-            b_min = aux
-            b_idx  = i
-
-    
-    delta = freqs[b_idx]-freqs[a_idx]
-
-    #print(b_idx)
-    #print(a_idx)
-    #print(idx_f0)
-
-    return f0/delta
-    
-    
 
 def fitCPW(f,Q,f0,Qc,floor):
     """ Complex fit using Lorentzian curve and error term.

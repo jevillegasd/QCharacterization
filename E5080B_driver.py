@@ -10,6 +10,7 @@ class E5080B_driver():
     
     def __init__(self,address):
         self._address = address
+        self.meas = 'S21'
 
     def send(self, cmd):
         self._inst.write(cmd)
@@ -42,14 +43,14 @@ class E5080B_driver():
         self._inst.write('SENSe:AVERage:STATe 0')
 
 
-    def set_data_format(self,data_format):
+    def set_data_format(self,meas='S21',data_format='MA'):
         ''' 
         The format available are:
         MA - Linear Magnitude / degrees
         DB - Log Magnitude / degrees
         RI - Real / Imaginary
         '''
-
+        self.meas = meas
         if data_format != 'MA' and data_format != 'DB' and data_format != 'RI':
             raise ValueError("Format not available.")
         

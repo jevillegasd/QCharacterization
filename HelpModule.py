@@ -8,39 +8,55 @@ import scipy.interpolate as spy
 from scipy import odr
 from scipy.optimize import curve_fit
 from E5080B_driver import E5080B_driver
+from ZNB26_driver import ZNB26_driver
+
 
 #Spectrometry one-liner
-def meas_spectrum(instr: E5080B_driver, f_c :float= 7.33e9, f_span:float = 80, power = -60, sleep_t = 3, npoints:int = 1001, data_format = 'MA', avg_count = 1000, meas = 'S21', overule_power = False, *arg, **kwargs): 
+def meas_spectrum(instr, f_c :float= 7.33e9, f_span:float = 80, power = -60, sleep_t = 10, npoints:int = 1001, data_format = 'MA', avg_count = 1000, meas = 'S21', overule_power = False, *arg, **kwargs): 
     from time import sleep
-    instr.set_data_format(data_format)
+    
+    #print(instr.__class__.__name__)
+    
+    # if instr.__class__.__name__ == 'ZNB26_driver':
+    #     instr.set_data_format(meas, data_format)
+    # elif instr.__class__.__name__ == 'E5080B_driver':
+    #     instr.set_data_format(data_format)
+    # else:
+    #     raise ValueError("Check Instrument parameter in HelpModule")
+    
+    #instr.set_data_format(meas, data_format)
+    instr.set_data_format(meas, data_format)
     instr.set_center_frequency(f_c)
     instr.set_span_frequency(f_span)
     instr.set_power(power,overule_power)
     instr.set_average_count(avg_count)
-    instr.set_sweep_npoints(npoints )
-
+    instr.set_sweep_npoints(npoints)
     instr.reset_average()
     # instr.send(":CALC1:MEAS1:CORR:EDEL:TIME %2.4e"%delay)
 
     
 
-    state= "+3\n"
-    while state  == "+3\n":
-        sleep(0.02)
-        try:
-            state = instr.query("STAT:QUES:INT:MEAS1:COND?")
-        except Exception:
-            print(Exception)
+    # state= "+3\n"
+    # while state  == "+3\n":
+    #     sleep(0.02)
+    #     try:
+    #         state = instr.query("STAT:QUES:INT:MEAS1:COND?")
+    #     except Exception:
+    #         print(Exception)
         
-    sleep(0.1)
+    sleep(0.2)
     f = instr.get_freq_array()
     instr.start_rf()
     sleep(sleep_t)
     mag, phi = instr.get_data(meas)
     return f, mag, phi
 
-def lorentzian( x, x0, a, gam , a0):
-    return a0+ a/(2*np.pi) * gam / ( (gam/2)**2 + ( x - x0 )**2)
+def lorentzian( x, x0, a0, a1,a2, gam):
+    '''
+        lorentizian with quadratic background
+    '''
+    return (a2*x**2+a1*x+a0)/(2*np.pi) * gam / ( (gam/2)**2 + ( x - x0 )**2)
+
 
 def Q2(f,mag, plot_f = False):
     '''
@@ -66,50 +82,72 @@ def Q2(f,mag, plot_f = False):
     return f_c[0], Q, fwhm[0]
 
 
-def Q(f, mag, plot_f = False):
+def Q(f, mag, plot_f = False, format='MA'):
     '''
-    Loaded quality factor, fit to a conventional Lorentzian
+    Loaded quality factor, fit to a conventional Lorentzian in amplitude scale
     '''
     from scipy.optimize import curve_fit
     from scipy.signal import find_peaks
+    import plotly.graph_objects as go 
+    import plotly.express as px 
 
-    num_samp = round(len(f)/10)
-    
-    mag_lin = mag -mag.min()
-    max_v = mag_lin.max()
-    min_w = int(len(f)/20)
+    # Make sure data is in linear scale
+    if format == 'DB': mag_lin = 10**(mag/20)
+    else: mag_lin = mag
 
+    mag_min = mag_lin.min()
+    mag_lin = mag_lin -mag_min
+
+    min_w = int(len(f)/1000)
     peaks, _ = find_peaks(mag_lin, width=min_w, prominence=mag_lin.max()/2)
-    flip = False
-    if len(peaks) == 0: 
-        mag_lin = max_v-mag_lin
+    
+    if len(peaks) == 0:
+        zero = mag_lin.max()
+        mag_lin =zero -mag_lin
         peaks, _ = find_peaks(mag_lin, width=min_w, prominence=mag_lin.max()/2)
         flip = True
+        idx_fc= peaks[0]
+    else:
+        flip = False
+        idx_fc = peaks[0]
 
-
-    idx_fmax = peaks[0]
-    mag_scale = max(mag_lin)
-
-    yData = mag_lin / mag_scale
-    xData = range(len(f))
+    max_v = mag_lin.max() # Normalization constant
+    yData = mag_lin / max_v #Normalize
+    xData = np.linspace(-len(f)/2,len(f)/2,len(f))
 
     param, _ = curve_fit(lorentzian, 
-                         xData[idx_fmax-int(num_samp/2):idx_fmax+int(num_samp/2)], 
-                         yData[idx_fmax-int(num_samp/2):idx_fmax+int(num_samp/2)])
-    mag_fit = [ lorentzian(x, *param)*mag_scale for x in xData ]
+                         xData, 
+                         yData)
+    
+    mag_fit = [ lorentzian(x, *param)*max_v for x in xData ]
 
-    if flip:
-        mag_fit = max_v-mag_fit
+    if flip: 
+        mag_fit = zero-mag_fit
+    mag_fit = mag_fit + mag_min
 
-    f_c = f[idx_fmax]
+    if format == 'DB':
+        mag_fit = 20*np.log10(mag_fit)
+
+    f_c = f[idx_fc]
     df = f[1]-f[0]
     FWHM = abs(df*param[-1]) # Gamma = param[-1]
     Q = f_c/FWHM
+    mag_dB_min = 20*np.log10(mag[idx_fc])
+
+
     if plot_f:
-        plt.plot(f,mag)
-        plt.plot(f,mag_fit)
+        #fig = px.line(x=f,y=mag)
+        fig = go.Figure()
+        fig_dB = go.Figure()
+        fig.add_trace(go.Scatter(x=f,y=mag, name="mag"))
+        fig.add_trace(go.Scatter(x=f,y=mag_fit, name="mag_fit"))
+        fig.update_xaxes(exponentformat = 'power')
+        fig_dB.add_trace(go.Scatter(x=f,y=20*np.log10(mag), name="mag_dB", showlegend=True, marker=dict(color="green")))
+        fig_dB.update_xaxes(exponentformat = 'power')
+        #fig.show()
         pass
-    return f_c, Q, FWHM
+
+    return f_c, Q, FWHM, mag_dB_min, fig, fig_dB #, , mag_dB_min
 
 def find_max(freqs,mag):
     return freqs[np.where(mag==np.max(mag))][0]
@@ -433,10 +471,12 @@ def get_plot_str(params, filename=""):
     return plot_str
 
 def punch_out(instr, f_c=7.33e9, hp = -10, lp = -65, f_span = 30, meas = 'S21',overule_power=True):
+    import plotly.graph_objects as go
     f, m,_ =  meas_spectrum(instr, f_c = f_c, f_span = f_span, power =hp, sleep_t = 5, npoints = 1000, data_format = 'MA', meas = meas, overule_power=overule_power)
-    f_c0, Qf0,_ = Q(f,m, True)
+    f_c0, Qf0, FWHMf0, mag_dB_minf0, fig0, fig_dBf0 = Q(f,m, True)
     f, m , _ =  meas_spectrum(instr, f_c = f_c, f_span = f_span, power =lp, sleep_t = 30, npoints = 1000, data_format = 'MA',meas = meas)
-    f_c1, Qf1,_ = Q(f,m, True)
-
+    f_c1, Qf1, FWHMf1, mag_dB_minf1, fig1, fig_dBf1 = Q(f,m, True)
+    
+    fig = go.Figure(data = fig0.data + fig1.data)
     df = f_c1 - f_c0
-    return df
+    return df, f_c0, f_c1, fig #f_c, Q, FWHM, mag_dB_min, fig, fig_dB

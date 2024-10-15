@@ -10,6 +10,7 @@ class ZNB26_driver():
     
     def __init__(self,address):
         self._address = address
+        
 
     def send(self, cmd):
         self._inst.write(cmd)
@@ -24,9 +25,29 @@ class ZNB26_driver():
         '''Open conenction to instrument using address given in the constructor'''
         self._inst = rm.open_resource(self._address)
         self.idn = self._inst.query("*IDN?")
-        self.stop_rf()
         self._npoints = self.get_sweep_npoints()
+        #self._inst.write("*RST")
+        self._inst.write("SYSTEM:DISPLAY:UPDATE ON")
+        self.stop_rf()
 
+    # def preconfig(self, meas, data_format_znb26):
+    #     if data_format_znb26 == 'LOG' or data_format_znb26 == 'MLOG':
+    #         self._inst.write("CALC:PARAMETER:SDEFINE 'Trc1','{}'; :CALC:FORM {}".format(meas,data_format_znb26))
+    #         self._inst.write("CALC:PARAMETER:SDEFINE 'Trc2','{}'; :CALC:FORM PHAS".format(meas))
+    #         self._inst.write("DISPLAY:WINDOW:STATE ON")
+    #         self._inst.write("DISPLAY:WINDOW:TRACE1:FEED 'Trc1'")
+    #         self._inst.write("DISPLAY:WINDOW:TRACE2:FEED 'Trc2'")
+    #         self._inst.write("DISPLAY:WINDOW:TRACE2:SHOW 'Trc2', 1")
+    #         self._inst.write("CALCULATE:PARAMETER:SELECT 'Trc1'")
+    #     elif data_format_znb26 == 'SMIT':
+    #         self._inst.write("CALC:PARAMETER:SDEFINE 'Trc1','{}'; :CALC:FORM {}".format(meas,data_format_znb26))
+    #         #self._inst.write("CALC:PARAMETER:SDEFINE 'Trc2','{}'; :CALC:FORM IMAG".format(meas))
+    #         self._inst.write("DISPLAY:WINDOW:STATE ON")
+    #         self._inst.write("DISPLAY:WINDOW:TRACE1:FEED 'Trc1'")
+    #         #self._inst.write("DISPLAY:WINDOW:TRACE2:FEED 'Trc2'")
+    #         #self._inst.write("DISPLAY:WINDOW:TRACE2:SHOW 'Trc2', 1")
+    #         #self._inst.write("CALCULATE:PARAMETER:SELECT 'Trc1'")
+        
     def reset_average(self):
         '''Reset average'''
         self._inst.write('SENS:AVER:CLE')
@@ -42,24 +63,64 @@ class ZNB26_driver():
         self._inst.write('SENSe:AVERage:STATe 0')
 
 
-    def set_data_format(self,data_format):
+    def set_data_format(self, meas='S21', data_format='MA'):
         ''' 
-        The format available are:
+        The format available for ZNB26 are:
+        LINPhase - Linear Magnitude / Phase
+        LOGPhase - Log Magnitude / Phase
+        COMPlex - Real / Imaginary
+
+        Will be translated from E5080B one to use original code:
         MA - Linear Magnitude / degrees
         DB - Log Magnitude / degrees
         RI - Real / Imaginary
         '''
-
-        if data_format != 'MA' and data_format != 'DB' and data_format != 'RI':
-            raise ValueError("Format not available.")
+        if data_format == 'MA':
+            data_format_znb26 = 'LOG'
+            #self.preconfig(meas, 'LOG') 
+            self._inst.write("CALC:PARAMETER:SDEFINE 'Trc1','{}'; :CALC:FORM {}".format(meas,data_format_znb26))
+            self._inst.write("CALC:PARAMETER:SDEFINE 'Trc2','{}'; :CALC:FORM PHAS".format(meas))
+            self._inst.write("CALC:PARAMETER:SDEFINE 'Trc3','{}'; :CALC:FORM SMIT".format(meas))
+            self._inst.write("DISPLAY:WINDOW:STATE ON")
+            self._inst.write("DISPLAY:WINDOW:TRACE1:FEED 'Trc1'")
+            self._inst.write("DISPLAY:WINDOW:TRACE2:FEED 'Trc2'")
+            self._inst.write("DISPLAY:WINDOW:TRACE3:FEED 'Trc3'")
+            self._inst.write("DISPLAY:WINDOW:TRACE2:SHOW 'Trc2', 0") # show Phase trace 0/1
+            self._inst.write("DISPLAY:WINDOW:TRACE3:SHOW 'Trc3', 1") # show Smith trace 0/1
+            self._inst.write("CALCULATE:PARAMETER:SELECT 'Trc1'")
+        elif data_format == 'DB':
+            #self.preconfig(data_format_znb26 = 'MLOG')
+            data_format_znb26 = 'MLOG'
+            #self.preconfig(meas, 'LOG') 
+            self._inst.write("CALC:PARAMETER:SDEFINE 'Trc1','{}'; :CALC:FORM {}".format(meas,data_format_znb26))
+            self._inst.write("CALC:PARAMETER:SDEFINE 'Trc2','{}'; :CALC:FORM PHAS".format(meas))
+            self._inst.write("DISPLAY:WINDOW:STATE ON")
+            self._inst.write("DISPLAY:WINDOW:TRACE1:FEED 'Trc1'")
+            self._inst.write("DISPLAY:WINDOW:TRACE2:FEED 'Trc2'")
+            self._inst.write("DISPLAY:WINDOW:TRACE2:SHOW 'Trc2', 0")
+            self._inst.write("CALCULATE:PARAMETER:SELECT 'Trc1'")
+        elif data_format == 'RI':
+            data_format_znb26 = 'SMIT'
+            #self.preconfig(data_format_znb26 = 'SMIT')
+            self._inst.write("CALC:PARAMETER:SDEFINE 'Trc1','{}'; :CALC:FORM {}".format(meas,data_format_znb26))
+            #self._inst.write("CALC:PARAMETER:SDEFINE 'Trc2','{}'; :CALC:FORM IMAG".format(meas))
+            self._inst.write("DISPLAY:WINDOW:STATE ON")
+            self._inst.write("DISPLAY:WINDOW:TRACE1:FEED 'Trc1'")
+        else:
+            raise ValueError("Format not available. Must be 'MA','DB' or 'RI'")
         
-        self._inst.write("MMEM:STOR:TRAC:FORM:SNP {}".format(data_format))
+        # if data_format != 'MA' and data_format != 'DB' and data_format != 'RI':
+        #     raise ValueError("Format not available.")
+        
+        #self._inst.write("MMEM:STOR:TRAC:FORM:SNP {}".format(data_format))
+        #return data_format
 
     def set_average_count(self,count):
         if count < 0:
             raise ValueError("The number of average count should be positive and integer.")
             
         self._inst.write('SENSe:AVERage:COUNT {}'.format(int(count)))
+        self._inst.write('SENSe:AVERage:STAT 1')
 
     def get_average_count(self):
         result = self._inst.query("SENSe:AVERage:COUNT?")
@@ -77,7 +138,7 @@ class ZNB26_driver():
 
         if power_dBm > 15:
             raise ValueError("Power over instrument limit. Should  be between -100 and 15.")
-        if power_dBm < -100:
+        if power_dBm < -65:
             raise ValueError("Power below instrument limit. Should  be between -100 and 15.")
 
         if not overule_power and power_dBm > -5:
@@ -133,30 +194,33 @@ class ZNB26_driver():
 
     def get_freq_array(self):
         '''Return the data from the VNA. The result is big array with frequency, S11,S21,S12,S22. The first npoints is the frequency.'''
-        data = self._inst.query("CALCulate:MEASure:DATA:SNP?")
+        data = self._inst.query("CALC:DATA:STIMulus?")
         f = np.array(data.split(','),dtype=float)
         return f[:self._npoints]
 
     def get_data(self, meas = 'S21'):
         '''Return the data from the VNA. The result is big array with frequency, S11,S21,S12,S22. the third array of npoints is the S21 mag.
            and the fourth array of npoints is the S21 phase. '''
-        data = self._inst.query("CALCulate:MEASure:DATA:SNP?")
+        self._inst.write("FORMat:DATA ASCii")
+        #data = self._inst.query("CALCulate:MEASure:DATA:SNP?")
+        #f = np.array(data.split(','),dtype=float)
+        data = self._inst.query("CALC:DATA:CHAN:ALL? FDAT")
         f = np.array(data.split(','),dtype=float)
-
+        
         npoints = self._npoints
         
         if meas == 'S11':
-            j = 1
-            i = 2
+            j = 0
+            i = 1
         elif meas == 'S12':
-            j = 5
-            i = 6
+            j = 0
+            i = 1
         elif meas == 'S22':
-            j = 7
-            i = 8
+            j = 0
+            i = 1
         else:
-            j = 3
-            i = 4
+            j = 0
+            i = 1
 
         
         mag = f[npoints*j:npoints*(j+1)]    
@@ -173,7 +237,7 @@ class ZNB26_driver():
 
 #Context manager handle to start the RF output
 class run():
-    def __init__(self,driver: E5080B_driver):
+    def __init__(self,driver: ZNB26_driver):
         self.driver = driver
 
     def __enter__(self):
